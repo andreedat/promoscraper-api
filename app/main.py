@@ -1,11 +1,3 @@
-"""
-main.py — Ponto de entrada da aplicação FastAPI.
-
-Define o ciclo de vida da app (lifespan), registra as rotas e configura
-middlewares. Mantém as rotas finas (thin controllers): a lógica de negócio
-vive em scraper.py e a lógica de persistência em funções dedicadas aqui.
-"""
-
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -27,10 +19,6 @@ from app.schemas import (
 )
 from app.scraper import ScrapeItemResult, scrape_all_items
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -38,28 +26,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Lifespan (substitui deprecated on_event)
-# ---------------------------------------------------------------------------
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Gerencia o ciclo de vida da aplicação:
-    - Startup: inicializa o banco de dados (cria tabelas se necessário)
-    - Shutdown: recursos são liberados automaticamente pelo engine
-    """
     logger.info("🚀 PromoScraper API iniciando...")
     await init_db()
     logger.info("✅ Banco de dados inicializado com sucesso.")
     yield
     logger.info("🛑 PromoScraper API encerrando.")
-
-
-# ---------------------------------------------------------------------------
-# Instância da aplicação
-# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="PromoScraper API",
@@ -76,24 +49,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, restrinja para domínios específicos
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------------------------------------------------------------------------
-# Funções auxiliares de persistência
-# ---------------------------------------------------------------------------
-
 
 async def _save_promotions(
     db: AsyncSession,
     item_result: ScrapeItemResult,
 ) -> list[Promotion]:
-    """
-    Persiste os resultados de um único item de scraping no banco.
-    Retorna os objetos ORM criados com seus IDs preenchidos.
-    """
     saved: list[Promotion] = []
     for promo in item_result.promotions:
         db_promo = Promotion(
@@ -106,15 +70,8 @@ async def _save_promotions(
         db.add(db_promo)
         saved.append(db_promo)
 
-    # Flush envia os INSERTs ao banco e popula os IDs sem commitar a transação
     await db.flush()
     return saved
-
-
-# ---------------------------------------------------------------------------
-# Rotas
-# ---------------------------------------------------------------------------
-
 
 @app.get(
     "/health",
@@ -123,10 +80,6 @@ async def _save_promotions(
     tags=["Infra"],
 )
 async def health_check(db: AsyncSession = Depends(get_db)) -> HealthResponse:
-    """
-    Verifica se a API e a conexão com o banco de dados estão operacionais.
-    Ideal para liveness/readiness probes em ambientes Kubernetes.
-    """
     try:
         await db.execute(text("SELECT 1"))
         db_status = "healthy"
@@ -140,7 +93,6 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> HealthResponse:
         version=app.version,
     )
 
-
 @app.post(
     "/scrape/",
     response_model=ScrapeResponse,
@@ -152,23 +104,8 @@ async def scrape_promotions(
     payload: ScrapeRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ScrapeResponse:
-    """
-    Recebe uma lista de produtos, busca promoções de forma **concorrente**
-    no Mercado Livre e persiste os resultados no banco de dados.
-
-    ### Fluxo interno:
-    1. `scrape_all_items` dispara todas as buscas em paralelo via `asyncio.gather`
-    2. Para cada item com sucesso, os resultados são salvos no PostgreSQL
-    3. A resposta agrega todos os resultados, incluindo erros parciais
-
-    ### Comportamento em caso de falha:
-    - Falhas em itens individuais **não** cancelam os demais
-    - O campo `results[].status` indica `'success'` ou `'error'` por item
-    - Um erro total de infraestrutura retorna HTTP 503
-    """
     logger.info("POST /scrape/ recebido com %d item(s): %s", len(payload.items), payload.items)
 
-    # 1. Executa scraping concorrente
     try:
         scrape_results = await scrape_all_items(payload.items)
     except Exception as exc:
@@ -178,7 +115,6 @@ async def scrape_promotions(
             detail=f"Serviço de scraping temporariamente indisponível: {exc}",
         ) from exc
 
-    # 2. Persiste resultados e monta resposta
     response_results: list[ScrapeResult] = []
     total_saved = 0
 
@@ -241,7 +177,6 @@ async def scrape_promotions(
         results=response_results,
     )
 
-
 @app.get(
     "/promotions/",
     response_model=list[PromotionRead],
@@ -255,14 +190,6 @@ async def list_promotions(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ) -> list[PromotionRead]:
-    """
-    Lista as promoções já salvas no banco com filtros opcionais.
-
-    - **search_term**: filtra por termo de busca (correspondência exata)
-    - **source**: filtra por e-commerce de origem
-    - **limit**: máximo de registros retornados (padrão: 50)
-    - **offset**: deslocamento para paginação
-    """
     from sqlalchemy import select
 
     query = select(Promotion).order_by(Promotion.scraped_at.desc())
