@@ -1,12 +1,3 @@
-"""
-tests/test_promoscraper.py — Suite de testes com pytest + pytest-asyncio.
-
-Estratégia de testes:
-- Unit tests: funções de parsing (sem I/O externo)
-- Integration tests: rotas da API com banco SQLite em memória (sem Docker)
-- Mocking: aiohttp é mockado para isolar a lógica de scraping do I/O real
-"""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,15 +18,8 @@ from app.scraper import (
     scrape_all_items,
 )
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="session")
 def event_loop():
-    """Cria um event loop compartilhado para toda a suite."""
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -43,10 +27,6 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session():
-    """
-    Cria um banco SQLite em memória por teste.
-    Evita dependência de PostgreSQL externo e garante isolamento entre testes.
-    """
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -64,9 +44,6 @@ async def db_session():
 
 @pytest_asyncio.fixture
 async def async_client(db_session: AsyncSession):
-    """
-    Cliente HTTP assíncrono que injeta o banco de teste via DI override.
-    """
     async def override_get_db():
         yield db_session
 
@@ -78,11 +55,6 @@ async def async_client(db_session: AsyncSession):
         yield client
 
     app.dependency_overrides.clear()
-
-
-# ---------------------------------------------------------------------------
-# Unit tests — _parse_price
-# ---------------------------------------------------------------------------
 
 
 class TestParsePrice:
@@ -109,12 +81,6 @@ class TestParsePrice:
         assert _parse_price("0") == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Unit tests — _parse_mercado_livre_html
-# ---------------------------------------------------------------------------
-
-
-# HTML mínimo que simula a estrutura do Mercado Livre
 MOCK_ML_HTML = """
 <html><body>
 <ul>
@@ -176,7 +142,7 @@ class TestParseMercadoLivreHtml:
         assert results == []
 
     def test_respects_max_results_limit(self):
-        # Cria HTML com 10 itens
+
         items_html = ""
         for i in range(10):
             items_html += f"""
@@ -189,11 +155,6 @@ class TestParseMercadoLivreHtml:
         html = f"<html><body><ul>{items_html}</ul></body></html>"
         results = _parse_mercado_livre_html(html, "teste")
         assert len(results) == 5  # MAX_RESULTS_PER_ITEM
-
-
-# ---------------------------------------------------------------------------
-# Unit tests — scrape_all_items (com mock de I/O)
-# ---------------------------------------------------------------------------
 
 
 class TestScrapeAllItems:
@@ -219,10 +180,6 @@ class TestScrapeAllItems:
 
     @pytest.mark.asyncio
     async def test_handles_partial_failure_gracefully(self):
-        """
-        Uma falha em um item não deve cancelar os demais.
-        Verifica o comportamento de return_exceptions=True no gather.
-        """
         success_result = ScrapeItemResult(
             search_term="monitor gamer",
             promotions=[
@@ -251,12 +208,6 @@ class TestScrapeAllItems:
         assert results[0].success is True
         assert results[1].success is False
         assert results[1].error == "HTTP 404"
-
-
-# ---------------------------------------------------------------------------
-# Integration tests — API endpoints
-# ---------------------------------------------------------------------------
-
 
 class TestHealthEndpoint:
     @pytest.mark.asyncio
@@ -339,8 +290,6 @@ class TestScrapeEndpoint:
 
     @pytest.mark.asyncio
     async def test_scrape_handles_partial_error_in_results(self, async_client: AsyncClient):
-        """Testa que erros parciais são refletidos na resposta sem falhar o endpoint."""
-        mock_results = [
             ScrapeItemResult(
                 search_term="produto ok",
                 promotions=[
@@ -396,7 +345,6 @@ class TestListPromotionsEndpoint:
     async def test_list_promotions_data_persisted_after_scrape(
         self, async_client: AsyncClient
     ):
-        """End-to-end: verifica que dados do /scrape/ aparecem no /promotions/."""
         mock_results = [
             ScrapeItemResult(
                 search_term="headset gamer",
