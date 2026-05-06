@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 import urllib.parse
 from dataclasses import dataclass, field
 
@@ -9,18 +8,12 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-MERCADO_LIVRE_BASE_URL = "https://lista.mercadolivre.com.br"
-MAX_RESULTS_PER_ITEM = 5
+MAX_RESULTS_PER_STORE = 5
 REQUEST_TIMEOUT_SECONDS = 15
-MAX_CONCURRENT_REQUESTS = 5
+MAX_CONCURRENT_REQUESTS = 10
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0",
 }
 
 @dataclass
@@ -39,151 +32,109 @@ class ScrapeItemResult:
 
     @property
     def success(self) -> bool:
-        return self.error is None
+        return self.error is None or len(self.promotions) > 0
 
-def _parse_price(price_text: str) -> float | None:
-    if not price_text:
-        return None
-    
-    cleaned = re.sub(r"[R$\s\xa0]", "", price_text)
-    
-    if "," in cleaned and "." in cleaned:
-        cleaned = cleaned.replace(".", "").replace(",", ".")
-    elif "," in cleaned:
-        cleaned = cleaned.replace(",", ".")
-        
-    cleaned = re.sub(r"[^\d.]", "", cleaned)
-    
-    try:
-        return float(cleaned)
-    except ValueError:
-        logger.debug("Não foi possível converter preço: %r", price_text)
-        return None
-
-def _parse_mercado_livre_html(html: str, search_term: str) -> list[ScrapedPromotion]:
+def _parse_books_toscrape(html: str, search_term: str) -> list[ScrapedPromotion]:
     soup = BeautifulSoup(html, "html.parser")
-    promotions: list[ScrapedPromotion] = []
-
-    items = soup.select("li.ui-search-layout__item")
-    if not items:
-        items = soup.select("div.ui-search-result__wrapper")
-
-    for item in items[:MAX_RESULTS_PER_ITEM]:
-        title_tag = item.select_one(
-            "h2.poly-box.poly-component__title, "
-            "h2.ui-search-item__title, "
-            "a.poly-component__title"
-        )
+    promotions = []
+    
+    items = soup.select("article.product_pod")
+    
+    term_lower = search_term.lower()
+    
+    for item in items:
+        if len(promotions) >= MAX_RESULTS_PER_STORE:
+            break
+            
+        title_tag = item.select_one("h3 a")
         if not title_tag:
             continue
-        title = title_tag.get_text(strip=True)
-        if not title:
-            continue
-
-        link_tag = item.select_one(
-            "a.poly-component__title, "
-            "a.ui-search-item__group__element"
-        )
-        link = link_tag.get("href", "") if link_tag else ""
-        if not link:
+            
+        title = title_tag.get("title", "")
+        if term_lower not in title.lower():
             continue
             
-        link = link.split("#")[0].split("?")[0]
-
-        fraction_tag = item.select_one("span.andes-money-amount__fraction")
-        cents_tag = item.select_one("span.andes-money-amount__cents")
-
-        price: float | None = None
-        if fraction_tag:
-            fraction_text = fraction_tag.get_text(strip=True)
-            cents_text = cents_tag.get_text(strip=True) if cents_tag else "00"
-            price_str = f"{fraction_text},{cents_text}"
-            price = _parse_price(price_str)
-
-        promotions.append(
-            ScrapedPromotion(
-                title=title,
-                price=price,
-                link=link,
-                source="Mercado Livre",
-                search_term=search_term,
-            )
-        )
-
+        link = title_tag.get("href", "")
+        if link and not link.startswith("http"):
+            link = f"https://books.toscrape.com/{link}"
+            
+        price_tag = item.select_one("p.price_color")
+        price = None
+        if price_tag:
+            price_text = price_tag.get_text(strip=True).replace("£", "").replace("Â", "")
+            try:
+                price = float(price_text)
+            except ValueError:
+                pass
+                
+        promotions.append(ScrapedPromotion(title, price, link, "Books To Scrape", search_term))
+        
     return promotions
 
-async def _fetch_mercado_livre(
+STORES = [
+    {
+        "name": "BooksToScrape",
+        "url_template": "https://books.toscrape.com/index.html", 
+        "parser": _parse_books_toscrape
+    }
+]
+
+async def _fetch_store(
     session: aiohttp.ClientSession,
     semaphore: asyncio.Semaphore,
     search_term: str,
-) -> ScrapeItemResult:
-    encoded_term = urllib.parse.quote(search_term)
-    url = f"{MERCADO_LIVRE_BASE_URL}/{encoded_term}"
+    store_config: dict
+) -> list[ScrapedPromotion] | dict:
+    
+    url = store_config["url_template"]
+    store_name = store_config["name"]
 
     async with semaphore:
         try:
-            logger.info("Iniciando scraping para: %r → %s", search_term, url)
+            logger.info("Scraping [%s] para: %r", store_name, search_term)
             async with session.get(url, headers=HEADERS, allow_redirects=True) as response:
                 if response.status != 200:
-                    error_msg = f"HTTP {response.status} ao buscar '{search_term}'"
-                    logger.warning(error_msg)
-                    return ScrapeItemResult(search_term=search_term, error=error_msg)
-
+                    return {"term": search_term, "error": f"{store_name}: HTTP {response.status}"}
+                
                 html = await response.text(encoding="utf-8", errors="replace")
-
-        except aiohttp.ClientConnectorError as exc:
-            error_msg = f"Falha de conexão ao Mercado Livre: {exc}"
-            logger.error(error_msg)
-            return ScrapeItemResult(search_term=search_term, error=error_msg)
-
-        except asyncio.TimeoutError:
-            error_msg = f"Timeout ({REQUEST_TIMEOUT_SECONDS}s) ao buscar '{search_term}'"
-            logger.error(error_msg)
-            return ScrapeItemResult(search_term=search_term, error=error_msg)
-
-        except aiohttp.ClientError as exc:
-            error_msg = f"Erro HTTP inesperado: {exc}"
-            logger.exception(error_msg)
-            return ScrapeItemResult(search_term=search_term, error=error_msg)
+                
+        except Exception as exc:
+            return {"term": search_term, "error": f"{store_name}: {exc}"}
 
     try:
-        promotions = _parse_mercado_livre_html(html, search_term)
-        logger.info(
-            "Scraping de %r concluído: %d resultado(s) encontrado(s).",
-            search_term,
-            len(promotions),
-        )
-        return ScrapeItemResult(search_term=search_term, promotions=promotions)
+        promotions = store_config["parser"](html, search_term)
+        return promotions
     except Exception as exc:
-        error_msg = f"Erro no parsing HTML para '{search_term}': {exc}"
-        logger.exception(error_msg)
-        return ScrapeItemResult(search_term=search_term, error=error_msg)
+        return {"term": search_term, "error": f"{store_name} Parser Error: {exc}"}
 
 async def scrape_all_items(search_terms: list[str]) -> list[ScrapeItemResult]:
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
+    tasks = []
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        tasks = [
-            _fetch_mercado_livre(session, semaphore, term)
-            for term in search_terms
-        ]
+        for term in search_terms:
+            for store in STORES:
+                tasks.append(_fetch_store(session, semaphore, term, store))
 
-        results: list[ScrapeItemResult | BaseException] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    normalized: list[ScrapeItemResult] = []
-    for term, result in zip(search_terms, results):
+    grouped_results = {term: ScrapeItemResult(search_term=term) for term in search_terms}
+
+    for result in raw_results:
         if isinstance(result, BaseException):
-            logger.error("Exceção não tratada para '%s': %s", term, result)
-            normalized.append(
-                ScrapeItemResult(
-                    search_term=term,
-                    error=f"Erro interno inesperado: {result}",
-                )
-            )
-        else:
-            normalized.append(result)
+            continue
+            
+        if isinstance(result, list):
+            for promo in result:
+                grouped_results[promo.search_term].promotions.append(promo)
+                
+        elif isinstance(result, dict) and "error" in result:
+            term = result["term"]
+            error_msg = result["error"]
+            if grouped_results[term].error:
+                grouped_results[term].error += f" | {error_msg}"
+            else:
+                grouped_results[term].error = error_msg
 
-    return normalized
+    return list(grouped_results.values())
