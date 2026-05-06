@@ -1,15 +1,17 @@
 # 🛒 PromoScraper API
 
-> **Motor de scraping assíncrono de alta performance** para busca concorrente de promoções em e-commerces, construído com FastAPI, asyncio e PostgreSQL.
+> **Motor de scraping assíncrono de alta performance** para busca concorrente de dados na web, construído com FastAPI, asyncio e PostgreSQL. 
+> 
+> *🛡️ **Nota de Arquitetura:** Para demonstrar a capacidade de concorrência assíncrona sem esbarrar em bloqueios de rede (WAFs / Erros 403 e TCP 0) comuns em e-commerces reais, este projeto utiliza o ambiente oficial de testes **Books to Scrape** como fonte de dados em sua configuração padrão.*
 
 ```
-POST /scrape/ {"items": ["memória ram", "monitor gamer", "teclado mecânico"]}
+POST /scrape/ {"items": ["Light", "Bird", "Boys"]}
          │
          ▼
 ┌─────────────────────────────────────────────────────┐
 │              asyncio.gather (concorrente)            │
 │  ┌──────────────┐ ┌────────────────┐ ┌───────────┐  │
-│  │ memória ram  │ │ monitor gamer  │ │ teclado.. │  │
+│  │ termo: Light │ │ termo: Bird    │ │ termo: ...│  │
 │  │ aiohttp req  │ │ aiohttp req    │ │ aiohttp.. │  │
 │  └──────┬───────┘ └───────┬────────┘ └─────┬─────┘  │
 │         └─────────────────┴────────────────┘         │
@@ -264,7 +266,7 @@ Scraping concorrente de promoções para múltiplos produtos.
 **Request:**
 ```json
 {
-  "items": ["memória ram", "monitor gamer", "teclado mecânico"]
+  "items": ["Light", "Bird", "Boys"]
 }
 ```
 
@@ -272,20 +274,20 @@ Scraping concorrente de promoções para múltiplos produtos.
 ```json
 {
   "total_items_requested": 3,
-  "total_promotions_saved": 14,
+  "total_promotions_saved": 4,
   "results": [
     {
-      "search_term": "memória ram",
+      "search_term": "Light",
       "status": "success",
-      "promotions_found": 5,
+      "promotions_found": 1,
       "promotions": [
         {
           "id": 1,
-          "title": "Memória RAM 16GB DDR4 Kingston",
-          "price": 299.90,
-          "link": "https://www.mercadolivre.com.br/...",
-          "source": "Mercado Livre",
-          "search_term": "memória ram",
+          "title": "A Light in the Attic",
+          "price": 51.77,
+          "link": "[https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html](https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html)",
+          "source": "Books To Scrape",
+          "search_term": "Light",
           "scraped_at": "2024-05-15T14:32:00Z"
         }
       ],
@@ -333,13 +335,13 @@ curl http://localhost:8000/health
 # Scraping de múltiplos produtos
 curl -X POST http://localhost:8000/scrape/ \
   -H "Content-Type: application/json" \
-  -d '{"items": ["placa de vídeo rtx", "processador amd ryzen", "ssd nvme 1tb"]}'
+  -d '{"items": ["Light", "Bird", "Boys"]}'
 
 # Listar promoções salvas
 curl "http://localhost:8000/promotions/?limit=20"
 
 # Filtrar por termo
-curl "http://localhost:8000/promotions/?search_term=ssd+nvme+1tb"
+curl "http://localhost:8000/promotions/?search_term=Light"
 ```
 
 ### Com Python (httpx)
