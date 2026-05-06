@@ -1,0 +1,63 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Orquestração local de desenvolvimento
+#
+# Serviços:
+#   db  — PostgreSQL 15 com volume persistente
+#   api — PromoScraper API (depende do db estar healthy)
+#
+# Uso rápido:
+#   docker-compose up --build        # Sobe tudo
+#   docker-compose down -v           # Remove containers E volumes
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine          # Alpine: imagem ~50% menor que a padrão
+    container_name: promoscraper_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-promoscraper}
+    ports:
+      - "5432:5432"                    # Expõe para acesso local (DBeaver, psql, etc.)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready verifica se o PostgreSQL aceita conexões
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-promoscraper}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── API ──────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime                  # Usa o stage "runtime" do multi-stage build
+    container_name: promoscraper_api
+    restart: unless-stopped
+    environment:
+      # Monta DATABASE_URL a partir de variáveis individuais para flexibilidade
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-promoscraper}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy     # Espera o healthcheck do db passar
+    volumes:
+      # Bind mount do código: alterações locais refletem no container sem rebuild
+      # REMOVER em produção — usar apenas a imagem buildada
+      - ./app:/api/app:ro
+
+volumes:
+  postgres_data:
+    driver: local
+    name: promoscraper_postgres_data

@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements.txt — Dependências da PromoScraper API
+# Python 3.11+
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Validação de dados
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Banco de dados (ORM assíncrono)
+sqlalchemy==2.0.30
+asyncpg==0.29.0          # Driver async para PostgreSQL
+
+# Scraping assíncrono
+aiohttp==3.9.5
+beautifulsoup4==4.12.3
+lxml==5.2.1              # Parser HTML rápido para BeautifulSoup
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dev / Testes
+# ─────────────────────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6
+httpx==0.27.0            # Cliente HTTP para TestClient assíncrono do FastAPI
+aiosqlite==0.20.0        # Driver SQLite async para testes sem PostgreSQL
